@@ -10,10 +10,10 @@ import pytesseract
 import re
 import random
 
-from utils.map import *
-from utils.hp import extract_status_bars_precise, calculate_bar_fill_ratio
-from utils.key import *
-from utils.move import *
+from maple.utils.map import *
+from maple.utils.hp import extract_status_bars_precise, calculate_bar_fill_ratio
+from maple.utils.key import *
+from maple.utils.move import *
 
 # 如果需要指定tesseract路径，取消下面这行的注释并修改路径
 # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -56,19 +56,9 @@ def capture_window(hwnd):
     return img_bgr
 
 
-def auto_pickup_items(hwnd, pickup_count=5):
-    """
-    自动拾取物品：连续按Z键
-    pickup_count: 拾取次数
-    """
-    print(f"  🎯 开始拾取物品（{pickup_count}次）")
-    for i in range(pickup_count):
-        press_z_key(hwnd)
-        time.sleep(0.2)
 
-
-def auto_hp_mp_monitor(hp_threshold=70, mp_threshold=60, enable_auto_press=True,
-                       move_interval=15, pickup_interval=10, buff_interval=60, left=0, right=800, key_pos=[]):
+def auto_hp_mp_monitor(hp_threshold=80, mp_threshold=60, enable_auto_press=True,
+                       move_interval=15, pickup_interval=10, buff_interval=60, left=0, right=800, key_pos=[], slice = 10):
     """
     自动HP/MP监控 + 随机移动 + 拾取
     """
@@ -90,6 +80,7 @@ def auto_hp_mp_monitor(hp_threshold=70, mp_threshold=60, enable_auto_press=True,
         last_pickup = 0
         last_buff = 0
         press_cooldown = 2.0
+        move_idx = 0
 
         frame_count = 0
         last_detected_name = None
@@ -109,8 +100,8 @@ def auto_hp_mp_monitor(hp_threshold=70, mp_threshold=60, enable_auto_press=True,
 
             current_time = time.time()
 
-            # 每2帧打印一次状态
-            if frame_count % 6 == 0:
+            # 每5帧打印一次状态
+            if frame_count % 3 == 0:
                 status = f"[Frame {frame_count:04d}] HP: {hp_pct:5.1f}%  MP: {mp_pct:5.1f}%"
 
                 if last_detected_name:
@@ -125,6 +116,7 @@ def auto_hp_mp_monitor(hp_threshold=70, mp_threshold=60, enable_auto_press=True,
 
                 if enable_auto_press:
                     press_crtl_key(hwnd)
+                    auto_pickup_items(hwnd, pickup_count=2)
 
             # 检查HP并执行动作
             if hp_pct < hp_threshold and (current_time - last_hp_press) > press_cooldown:
@@ -142,18 +134,18 @@ def auto_hp_mp_monitor(hp_threshold=70, mp_threshold=60, enable_auto_press=True,
             # 定期执行随机移动
             if enable_auto_press and (current_time - last_move) > move_interval:
                 print(f"\n⏰ 执行定期随机移动...")
-
-                traversal_map(left, right, tracker, hwnd, key_pos=key_pos, slice=10)
+                move_idx = traversal_map(left, right, tracker, hwnd, key_pos=key_pos, slice=slice, idx = move_idx)
+                last_move = current_time
                 print()
 
-            # # 定期拾取物品
-            if enable_auto_press and (current_time - last_pickup) > pickup_interval:
-                print(f"\n⏰ 执行定期拾取...")
-                auto_pickup_items(hwnd, pickup_count=5)
-                last_pickup = current_time
-                print()
-            #
-            # # buff
+            # 定期拾取物品
+            # if enable_auto_press and (current_time - last_pickup) > pickup_interval:
+            #     print(f"\n⏰ 执行定期拾取...")
+            #     auto_pickup_items(hwnd, pickup_count=5)
+            #     last_pickup = current_time
+            #     print()
+
+            # buff
             if enable_auto_press and (current_time - last_buff) > buff_interval:
                 print("施加buff")
                 press_end_key(hwnd)

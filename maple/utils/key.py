@@ -35,10 +35,10 @@ def press_end_key(hwnd):
     time.sleep(1)
     press_key_advanced(win32con.VK_HOME, hwnd)
     print("  🩸 [ACTION] 按下 HOME 键 - 加攻")
-    time.sleep(1)
-    VK_PRIOR = 0x21
-    press_key_advanced(VK_PRIOR, hwnd)
-    print("  🩸 [ACTION] 按下 HOME 键 - 魔防")
+    # time.sleep(1)
+    # VK_PRIOR = 0x21
+    # press_key_advanced(VK_PRIOR, hwnd)
+    # print("  🩸 [ACTION] 按下 HOME 键 - 魔防")
 
 
 def press_page_down_key(hwnd):
@@ -70,14 +70,25 @@ def press_up(hwnd):
     press_key_advanced(win32con.VK_MENU, hwnd)  # Alt down
     time.sleep(0.5)
     press_key_advanced(win32con.VK_MENU, hwnd)
-    press_key_advanced(win32con.VK_UP, hwnd, 3)  # Up arrow
+    press_key_advanced(win32con.VK_UP, hwnd, 2.5)  # Up arrow
     time.sleep(0.1)
-    press_key_advanced(win32con.VK_RIGHT, hwnd, 1.0)
+    press_key_advanced(win32con.VK_RIGHT, hwnd, 1)
     print("  📦 [ACTION] 跳跃")
 
 def press_jump(hwnd):
     """逃脱卡死"""
-    press_key_advanced(win32con.VK_RIGHT, hwnd)
-    press_key_advanced(win32con.VK_SPACE, hwnd)
-    time.sleep(0.1)
+    # press_key_advanced(win32con.VK_RIGHT, hwnd, 0.5)
+    # time.sleep(0.1)
+    # press_key_advanced(win32con.VK_MENU, hwnd)
+    press_key_advanced(win32con.VK_UP, hwnd, 2.5)
+
     print("  📦 [ACTION] 逃脱卡死")
+
+def auto_pickup_items(hwnd, pickup_count=5):
+    """
+    自动拾取物品：连续按Z键
+    pickup_count: 拾取次数
+    """
+    print(f"  🎯 开始拾取物品（{pickup_count}次）")
+    for i in range(pickup_count):
+        press_z_key(hwnd)

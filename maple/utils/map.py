@@ -33,7 +33,7 @@ class MinimapPositionTracker:
         # 这个区域需要根据实际情况微调
         minimap_left = left + 15
         minimap_top = top + 65
-        minimap_right = left + 350
+        minimap_right = left + 300
         minimap_bottom = top + 300
 
         self.minimap_region = (
