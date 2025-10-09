@@ -35,10 +35,10 @@ def press_end_key(hwnd):
     time.sleep(1)
     press_key_advanced(win32con.VK_HOME, hwnd)
     print("  🩸 [ACTION] 按下 HOME 键 - 加攻")
-    # time.sleep(1)
-    # VK_PRIOR = 0x21
-    # press_key_advanced(VK_PRIOR, hwnd)
-    # print("  🩸 [ACTION] 按下 HOME 键 - 魔防")
+    time.sleep(1)
+    VK_PRIOR = 0x21
+    press_key_advanced(VK_PRIOR, hwnd)
+    print("  🩸 [ACTION] 按下 HOME 键 - 魔防")
 
 
 def press_page_down_key(hwnd):
@@ -66,11 +66,11 @@ def press_z_key(hwnd):
     print("  📦 [ACTION] 按下 Z 键 - 拾取物品")
 
 def press_up(hwnd):
-    """按Z键 - 拾取物品"""
+    """爬绳子"""
     press_key_advanced(win32con.VK_MENU, hwnd)  # Alt down
     time.sleep(0.5)
     press_key_advanced(win32con.VK_MENU, hwnd)
-    press_key_advanced(win32con.VK_UP, hwnd, 2.5)  # Up arrow
+    press_key_advanced(win32con.VK_UP, hwnd, 3)  # Up arrow
     time.sleep(0.1)
     press_key_advanced(win32con.VK_RIGHT, hwnd, 1.0)
     print("  📦 [ACTION] 跳跃")
