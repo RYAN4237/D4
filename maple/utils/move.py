@@ -44,6 +44,7 @@ def move_to_target(target, track, hwnd, tolerance=1):
             print("x轴位置未变化，可能卡住，退出移动")
             press_up(hwnd)
             return
+        last = current
 
 def traversal_map(left, right, track, hwnd, key_pos = [], tolerance=1, slice = 10):
     print(f"开始横向遍历地图，范围: {left} - {right}")
