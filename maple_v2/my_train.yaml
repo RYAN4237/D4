@@ -1,0 +1,9 @@
+train: train/images
+val: val/images
+
+nc: 3  # 不包括 __background__
+
+names:
+  0: __background__
+  1: monster
+  2: player

@@ -1,0 +1,4 @@
+opencv-contrib-python>=4.5.0
+numpy>=1.18.0
+pywin32>=225
+

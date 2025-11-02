@@ -1,0 +1,7 @@
+label:
+- color: '#000000'
+  name: __background__
+- color: '#00ff00'
+  name: monster
+- color: '#ff0000'
+  name: player
