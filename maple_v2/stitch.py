@@ -445,4 +445,5 @@ class SmartMinimapStitcher:
             "state": self.state,
             "state_confidence": self.state_confidence
         }
+    #
 
