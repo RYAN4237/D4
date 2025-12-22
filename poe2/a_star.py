@@ -1,11 +1,15 @@
+import math
 from collections import deque
 
 import cv2
 import numpy as np
 import time
-from visited_recorder import VisitedRecorder
-import heapq
+
+from poe2.map_utils import MapUtils
 from collections import deque
+from pathfinding.core.grid import Grid
+from pathfinding.core.diagonal_movement import DiagonalMovement
+from pathfinding.finder.a_star import AStarFinder
 
 global current_path
 global idx
@@ -39,6 +43,7 @@ def preprocess_route_img(route_img, mini_img, kernel_size=3, close_iter=1, debug
     # Convert to grayscale for thresholding
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
 
+    print(np.unique(gray))
     # Heuristic thresholds (may be adjusted):
     # - dark (near 0): obstacle
     # - mid/gray: unexplored (prefer)
@@ -108,7 +113,7 @@ def mini_map_matching(mini_map, big_map, current_pos, threshold=0.7, debug=True)
     big_map_new_gray = cv2.adaptiveThreshold(big_map_new_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                               cv2.THRESH_BINARY, 5, 1)
     big_map_new_gray = cv2.medianBlur(big_map_new_gray, 3)
-    cv2.imshow("big_map_new_gray", big_map_new_gray)
+    # cv2.imshow("big_map_new_gray", big_map_new_gray)
 
     # original crop used in the project
     h, w = mini_map_new_gray.shape
@@ -118,8 +123,6 @@ def mini_map_matching(mini_map, big_map, current_pos, threshold=0.7, debug=True)
     # Determine provided player coordinates early so we can ensure the
     # template we match contains the player point. If current_pos is invalid,
     # fall back to the center of the mini map.
-    px = None
-    py = None
     try:
         px = int(current_pos[0])
         py = int(current_pos[1])
@@ -149,65 +152,13 @@ def mini_map_matching(mini_map, big_map, current_pos, threshold=0.7, debug=True)
         cx1, cy1 = 0, 0
         cx2, cy2 = w, h
 
-    # If debug, save the template image used for matching so user can inspect
-    template_path = None
 
-    # Template match
-    res = cv2.matchTemplate(big_map_new_gray, template, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-    if max_val < threshold:
-        print(f"[mini_map_matching] match failed: max_val={max_val} < threshold={threshold}")
-        return 0, 0  # match failed
 
     # top-left of matched template in big_map
-    top_left = max_loc
+    top_left = MapUtils.findpic(big_map_new_gray, template, threshold, method=1)
 
     # template height (th) and width (tw)
     th, tw = template.shape
-
-    def _annotate_and_save(big_img, top_left, template_w, template_h, mapped_pt, score, tag=None, show=True):
-        vis = big_img.copy()
-        x0, y0 = int(top_left[0]), int(top_left[1])
-        x1, y1 = x0 + int(template_w), y0 + int(template_h)
-        # rectangle for template
-        cv2.rectangle(vis, (x0, y0), (x1, y1), (0, 0, 255), 2)
-        # mapped player point
-        cv2.circle(vis, (int(mapped_pt[0]), int(mapped_pt[1])), 5, (0, 255, 0), -1)
-        # label text
-        label = f"score:{score:.3f} mapped:{int(mapped_pt[0])},{int(mapped_pt[1])}"
-        if tag:
-            label = f"{tag} " + label
-        cv2.putText(vis, label, (max(0, x0), max(12, y0 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0), 1)
-        # timestamp
-        ts = int(time.time())
-        fname = rf"c:\Repo\D4\debug\mini_match_dbg_{ts}_{int(time.time_ns()%1000)}.png"
-
-        # if show:
-        #     try:
-        #         cv2.imshow('mini_map_matching_debug', vis)
-        #         cv2.waitKey(1)
-        #     except Exception:
-        #         pass
-        return fname
-
-    # Prepare debug info container
-    info = {
-        'score': float(max_val),
-        'top_left': (int(top_left[0]), int(top_left[1])),
-        'crop': (int(cx1), int(cy1), int(cx2), int(cy2)),
-        'template_size': (int(tw), int(th)),
-        'debug_image': None,
-        'template_image_path': template_path,
-        'ok_in_template': False,
-        'ok_in_matched_rect': False,
-    }
-    # if debug:
-    #     print('--- mini_map_matching debug ---')
-    #     print('mini size:', mini_map.shape)
-    #     print('template shape (h,w):', (th, tw))
-    #     print('crop offsets (cx1,cy1,cx2,cy2):', (cx1, cy1, cx2, cy2))
-    #     print('match top_left (x,y):', top_left)
-    #     print('match score max_val:', max_val)
 
     # map current_pos (in full mini_map coords) to big_map coords
     try:
@@ -233,57 +184,57 @@ def mini_map_matching(mini_map, big_map, current_pos, threshold=0.7, debug=True)
     player_global_x = top_left[0] + adj_x
     player_global_y = top_left[1] + adj_y
 
-    if debug:
-        info.update({
-            'player_on_mini': (int(px), int(py)),
-            'player_in_template': (int(adj_x), int(adj_y)),
-            'mapped_global': (int(player_global_x), int(player_global_y)),
-        })
-        # check whether original player point was inside the template before clamping
-        orig_in_template = ( (px - cx1) >= 0 and (px - cx1) < tw and (py - cy1) >= 0 and (py - cy1) < th )
-        info['ok_in_template'] = bool(orig_in_template)
-        # check whether mapped global point lies inside the matched rectangle on big_map
-        bx0, by0 = int(top_left[0]), int(top_left[1])
-        bx1, by1 = bx0 + int(tw), by0 + int(th)
-        in_rect = (player_global_x >= bx0 and player_global_x < bx1 and player_global_y >= by0 and player_global_y < by1)
-        info['ok_in_matched_rect'] = bool(in_rect)
-        # save annotated overlay and record path
-        dbg_path = _annotate_and_save(big_map, top_left, tw, th, (player_global_x, player_global_y), float(max_val), tag='mini_map_matching')
-        info['debug_image'] = dbg_path
-        print('mini_map_matching info:', info)
-        return player_global_x, player_global_y, info
-
     return player_global_x, player_global_y
 
-def _find_nearest_gray(start, weight_grid, max_radius=None, recorder=None):
-    """BFS to find nearest pixel with weight==1.0 (gray/unexplored). Excludes start if it's gray and seeks another pixel.
-    Returns (x,y) or None."""
+
+def _find_nearest_gray_v1(start, weight_grid, max_radius=None, recorder=None):
+    """
+    查找最近的灰色像素 (weight==1.0)，使用向量化优化。
+    Returns (x,y) or None.
+    """
     H, W = weight_grid.shape[:2]
     sx, sy = int(start[0]), int(start[1])
     if not (0 <= sx < W and 0 <= sy < H):
         return None
+
     target_val = 1.0
-    visited = np.zeros((H, W), dtype=np.bool_)
-    q = deque()
-    q.append((sx, sy, 0))
-    visited[sy, sx] = True
     previous_points = recorder.load_point()
-    # if start itself matches but we want a different point, still allow returning start
-    while q:
-        x, y, d = q.popleft()
-        if (x, y) in previous_points:
-            continue
-        if weight_grid[y, x] == target_val:
-            recorder.mark_point(x, y)
-            return (x, y)
-        if max_radius is not None and d >= max_radius:
-            continue
-        for dx, dy in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < W and 0 <= ny < H and not visited[ny, nx] and np.isfinite(weight_grid[ny, nx]):
-                visited[ny, nx] = True
-                q.append((nx, ny, d + 1))
-    return None
+    # print("previous_points:", previous_points)
+
+    # 找所有灰色像素坐标 (y, x)
+    gray_coords = np.argwhere(weight_grid == target_val)
+
+    if len(gray_coords) == 0:
+        return None
+
+    # 过滤已访问的点
+    if previous_points:
+        mask = np.array([
+            (int(x), int(y)) not in previous_points
+            for y, x in gray_coords
+        ])
+        gray_coords = gray_coords[mask]
+
+
+    if len(gray_coords) == 0:
+        return None
+
+    # 计算到起点的欧几里得距离
+    distances = np.sqrt((gray_coords[:, 1] - sx) ** 2 + (gray_coords[:, 0] - sy) ** 2)
+
+    # 应用 max_radius 限制
+    if max_radius is not None:
+        valid = distances <= max_radius
+        if not np.any(valid):
+            return None
+        distances = distances[valid]
+        gray_coords = gray_coords[valid]
+
+    # 找最近的点
+    idx = np.argmin(distances)
+    ny, nx = gray_coords[idx]
+
+    return (int(nx), int(ny))
 
 
 def _line_is_passable(x0, y0, x1, y1, weight_grid):
@@ -310,8 +261,7 @@ def _line_is_passable(x0, y0, x1, y1, weight_grid):
             y += sy
     return True
 
-
-def a_star(start, goal, route_img, mini_img, padding=10, debug_save_prefix=None):
+def a_star_new(start, goal, route_img, mini_img, padding=10, debug_save_prefix=None, recorder=None):
     """
     Weighted A* that prefers gray (unexplored) pixels when provided a three-map image
     where gray = unexplored (preferred), white = explored (less preferred), black = obstacle.
@@ -324,6 +274,8 @@ def a_star(start, goal, route_img, mini_img, padding=10, debug_save_prefix=None)
 
     Returns: path as list of (x,y) coordinates from start to goal (inclusive) or [] if no path.
     """
+
+
     # If route_img is an image, build weight grid
     if _is_image_like(route_img) and route_img.dtype == np.uint8:
         weight_grid, debug = preprocess_route_img(route_img, mini_img, kernel_size=3, close_iter=1,
@@ -341,59 +293,42 @@ def a_star(start, goal, route_img, mini_img, padding=10, debug_save_prefix=None)
         else:
             raise TypeError("route_img must be image array, weight grid array, or filepath string")
 
-    recorder = VisitedRecorder(route_img, mask_path=r"record_mask.png")
-    H, W = weight_grid.shape[:2]
+
+    H, W = weight_grid.shape[: 2]
 
     # If goal is None, choose nearest gray pixel (weight==1.0) as exploration target
     if goal is None:
-        tgt = _find_nearest_gray(start, weight_grid, recorder=recorder)
+        tgt = _find_nearest_gray_v1(start, weight_grid, recorder=recorder)
         if tgt is None:
             # no gray found, fallback: choose any finite pixel (e.g., nearest finite)
-            # perform BFS to find nearest finite
             visited = np.zeros((H, W), dtype=np.bool_)
             q = deque()
             sx0, sy0 = int(start[0]), int(start[1])
-            sx0 = max(0, min(W - 1, sx0)); sy0 = max(0, min(H - 1, sy0))
+            sx0 = max(0, min(W - 1, sx0))
+            sy0 = max(0, min(H - 1, sy0))
             q.append((sx0, sy0))
             visited[sy0, sx0] = True
             found = None
             while q:
                 x, y = q.popleft()
                 if np.isfinite(weight_grid[y, x]):
-                    found = (x, y); break
-                for dx, dy in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,-1),(-1,1),(1,1)]:
-                    nx, ny = x+dx, y+dy
-                    if 0<=nx<W and 0<=ny<H and not visited[ny, nx]:
+                    found = (x, y)
+                    break
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < W and 0 <= ny < H and not visited[ny, nx]:
                         visited[ny, nx] = True
                         q.append((nx, ny))
             if found is None:
-                # totally blocked
                 return []
             tgt = found
         goal = tgt
-        # attach chosen target to debug if possible
         try:
             debug['explore_target'] = goal
         except Exception:
             pass
 
-    cv2.circle(route_img, goal, 5, (127, 255, 127), cv2.FILLED)
-    def heuristic(a, b):
-        # Euclidean heuristic
-        return np.hypot(a[0] - b[0], a[1] - b[1])
-
-    # neighbors 8-connected
-    # neigh_offsets = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
-    neigh_offsets = [
-        # 4-connected (step=1)
-        (0, -1), (1, 0), (-1, 0), (0, 1),
-        # 8-connected (step=1)
-        (-1, -1), (1, -1), (-1, 1), (1, 1),
-        # larger steps (step=5)
-        (0, -5), (5, 0), (-5, 0), (0, 5),
-        (-5, -5), (5, -5), (-5, 5), (5, 5),
-    ]
-
+    print("goal", goal)
     # clamp start/goal
     orig_start = (int(start[0]), int(start[1]))
     orig_goal = (int(goal[0]), int(goal[1]))
@@ -403,11 +338,13 @@ def a_star(start, goal, route_img, mini_img, padding=10, debug_save_prefix=None)
     gy = max(0, min(H - 1, orig_goal[1]))
     start = (sx, sy)
     goal = (gx, gy)
-    # Inform if clamp changed coordinates (e.g., requested point outside image)
-    if orig_start != start or orig_goal != goal:
-        print(f"a_star: clamped start from {orig_start} to {start}, goal from {orig_goal} to {goal} (image size {W}x{H})")
 
-    # If start or goal is on an obstacle, try to nudge to nearest non-obstacle within small radius
+    if orig_start != start or orig_goal != goal:
+        print(
+            f"a_star: clamped start from {orig_start} to {start}, goal from {orig_goal} to {goal} (image size {W}x{H})")
+
+
+    # Nudge start/goal if on obstacle
     def _nudge(pt, max_r=5):
         x0, y0 = pt
         if not np.isinf(weight_grid[y0, x0]):
@@ -424,130 +361,57 @@ def a_star(start, goal, route_img, mini_img, padding=10, debug_save_prefix=None)
     ns = _nudge(start)
     ng = _nudge(goal)
     if ns is None or ng is None:
+        print("a_star: cannot nudge start/goal off obstacles")
         return []
     start = ns
     goal = ng
 
-    close_set = set()
-    came_from = {}
-    gscore = {start: 0.0}
-    fscore = {start: heuristic(start, goal)}
-    oheap = []
+    # === 使用 pathfinding 库 ===
+    # 将 weight_grid 转换为 pathfinding 需要的矩阵格式
+    # pathfinding:  0 = 障碍物, >0 = 可通行 (值越大代价越低)
+    # weight_grid:  inf = 障碍物, 1. 0 = 灰色(优先), 3.0 = 白色(次优先)
 
-    heapq.heappush(oheap, (fscore[start], start))
+    # 转换:  weight 越低越优先 -> pathfinding weight 越高越优先
+    # 使用 10/weight 转换，inf -> 0
+    matrix = np.zeros((H, W), dtype=np.float32)
+    finite_mask = np.isfinite(weight_grid)
+    matrix[finite_mask] = 10.0 / weight_grid[finite_mask]  # weight=1 -> 10, weight=3 -> 3. 33
+    matrix[~finite_mask] = 0  # 障碍物
 
-    max_iterations = H * W * 4
-    iters = 0
-    found = False
+    # 转为 int 矩阵 (pathfinding 需要)
+    # 放大以保留精度:  1.0 -> 100, 3.0 -> 33
+    matrix_int = (matrix * 10).astype(np.int32)
+    matrix_int = np.clip(matrix_int, 0, 100)
 
-    while oheap:
-        iters += 1
-        if iters > max_iterations:
-            break
-        current = heapq.heappop(oheap)[1]
-        if current == goal:
-            found = True
-            break
+    # 创建 Grid (注意:  pathfinding 使用 [y][x] 索引)
+    grid = Grid(matrix=matrix_int.tolist())
 
-        close_set.add(current)
-        cx, cy = current
-        for dx, dy in neigh_offsets:
-            nx = cx + dx
-            ny = cy + dy
-            if not (0 <= nx < W and 0 <= ny < H):
-                continue
-            if not _line_is_passable(cx, cy, nx, ny, weight_grid):
-                continue
-            # movement cost = average of current and neighbor pixel costs * movement distance
-            move_cost = (weight_grid[cy, cx] + weight_grid[ny, nx]) * 0.5
-            # incorporate diagonal distance
-            dist = np.hypot(dx, dy )
-            tentative_g_score = gscore[current] + move_cost * dist
+    start_node = grid.node(start[0], start[1])
+    end_node = grid.node(goal[0], goal[1])
 
-            neighbor = (nx, ny)
-            if neighbor in close_set and tentative_g_score >= gscore.get(neighbor, np.inf):
-                continue
-            if neighbor[0] < 0 or neighbor[0] >= W or neighbor[1] < 0 or neighbor[1] >= H:
-                continue
+    finder = AStarFinder(
+        diagonal_movement=DiagonalMovement.always,
+        weight=1,
+        time_limit=30.0
+    )
 
-            if tentative_g_score < gscore.get(neighbor, np.inf) or neighbor not in [i[1] for i in oheap]:
-                came_from[neighbor] = current
-                gscore[neighbor] = tentative_g_score
-                fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
-                heapq.heappush(oheap, (fscore[neighbor], neighbor))
+    path, runs = finder.find_path(start_node, end_node, grid)
 
-    if not found:
+    if not path:
         return []
 
-    # reconstruct path
-    data = []
-    cur = goal
-    while cur in came_from:
-        data.append(cur)
-        cur = came_from[cur]
-    data.append(start)
-    path = data[::-1]
+    # 转换为 (x, y) 元组列表
+    path = [(node.x, node.y) for node in path]
 
-    for i in range(len(path) - 1):
-        cv2.line(route_img, path[i], path[i + 1], (127, 255, 127), 2)
+    if recorder is not None:
+        final_x, final_y = path[-1]
+        # print("dest:", final_x, final_y)
+        if abs(start[0] - final_x) <= 10 and abs(start[1] - final_y) <= 10:
+            recorder.mark_point(final_x, final_y)
+
     return path
 
 
-
-
-
-def merge_blue_into_binary(img_bgr, blue_lower=(90,120,80), blue_upper=(110,255,255),
-                           dilate_before_close=True, kernel_size=(3,3), blue_value=127):
-    """
-    把 blue_mask 合并到二值图 bin_gray（来自 adaptiveThreshold），并把 blue 区设为 blue_value。
-    参数:
-      - img_bgr: 原始 BGR 图
-      - bin_gray: adaptiveThreshold 的结果 (单通道 0/255)
-      - blue_lower/blue_upper: HSV 范围（建议基于样本 [100,188,178] 使用 H~100, S 下限 <=188）
-      - dilate_before_close: 是否先 dilate 再 close（避免 open 吃掉细线）
-      - kernel_size: 形态学核尺寸
-      - blue_value: 合并后蓝色像素值 (127)
-    返回:
-      - three_map: 单通道 uint8，值为 {0, blue_value, 255}
-      - vis: BGR 可视化图（blue->蓝色, obstacle->白, free->黑）
-    """
-    big_map_mask_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-
-    # 你的原 pipeline
-    big_map_mask = cv2.inRange(big_map_mask_hsv,
-                               np.array([20, 60, 150], dtype=np.uint8),
-                               np.array([130, 190, 220], dtype=np.uint8))
-    big_map_new = cv2.bitwise_and(img_bgr, img_bgr, mask=big_map_mask)
-    big_map_new_gray = cv2.cvtColor(big_map_new, cv2.COLOR_BGR2GRAY)
-    big_map_new_gray = cv2.adaptiveThreshold(big_map_new_gray, 255,
-                                             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                             cv2.THRESH_BINARY, 5, 1)
-    big_map_new_gray = cv2.medianBlur(big_map_new_gray, 3)
-    big_map_new_gray = cv2.dilate(big_map_new_gray, (3, 3), iterations=1)
-    big_map_new_gray = cv2.morphologyEx(big_map_new_gray, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8), iterations=1)
-    big_map_new_gray = cv2.erode(big_map_new_gray, (3, 3), iterations=1)
-
-
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    lower = np.array(blue_lower, dtype=np.uint8)
-    upper = np.array(blue_upper, dtype=np.uint8)
-    blue_mask = cv2.inRange(hsv, lower, upper)
-
-    k = np.ones(kernel_size, np.uint8)
-
-    # 推荐先把线变粗以保持连通性：dilate -> close -> erode
-    if dilate_before_close:
-        blue_mask = cv2.dilate(blue_mask, k, iterations=1)
-    blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_CLOSE, k, iterations=1)
-    if dilate_before_close:
-        blue_mask = cv2.erode(blue_mask, k, iterations=1)
-
-
-    # 合并：把 adaptiveThreshold 的结果作为基础，然后覆盖 blue 区为 127
-    three_map = big_map_new_gray.copy().astype(np.uint8)
-    three_map[blue_mask > 0] = blue_value
-
-    return three_map
 
 if __name__ == "__main__":
     pass

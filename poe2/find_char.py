@@ -66,7 +66,7 @@ def detect_and_annotate(img: np.ndarray,
                         h_tol_deg: float = 12.0,
                         s_tol_pct: float = 25.0,
                         v_tol_pct: float = 30.0,
-                        area_min: float = 3.0,
+                        area_min: float = 4.0,
                         morph_kernel: int = 5,
                         save_path: str = "annotated_map.png"):
     """
@@ -99,7 +99,7 @@ def detect_and_annotate(img: np.ndarray,
     contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < area_min:
+        if area <= area_min:
             continue
         M = cv2.moments(contour)
 
